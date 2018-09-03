@@ -1,0 +1,3 @@
+[submodule "ewasm-testgen"]
+	path = ewasm-testgen
+	url = https://github.com/ewasm/ewasm-testgen
