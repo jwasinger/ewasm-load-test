@@ -1,12 +1,17 @@
 const GenerateTest = require('./ewasm-testgen/index.js')
 const Web3 = require('web3')
 const Async = require('async')
+const Tx = require('ethereumjs-tx')
+const Util = require('ethereumjs-util')
 const argv = require('yargs').option("faucet", {string: true}).argv
 
 if ( !argv.faucet)
   throw("error: must provide faucet private address")
 
-let faucetPk = argv.faucet
+let faucetPk = Buffer.from(argv.faucet, 'hex')
+
+let faucetAddr = Util.privateToAddress(faucetPk).toString('hex')
+console.log(faucetAddr)
 
 if ( !argv['rpc-endpoint'] )
   throw("error: must provide rpc endpoint")
@@ -14,29 +19,50 @@ if ( !argv['rpc-endpoint'] )
 let endpoint = argv['rpc-endpoint']
 
 let createAccounts = async (num) => {
-  for (let i = 0; i < num; i++ ) {
-    let txn = {
-      from: faucet,
-      to: '',
-      value: 0x1333333337,
-    }
+  let promise = new Promise((resolve, reject) => {
+    Async.mapSeries([...Array(num).keys()], (item, callback) => {
+      web3.eth.getTransactionCount(faucetAddr).then((nonce) => {
+        let txn = {
+          from: faucetAddr,
+          gasLimit: '0x27100',
+          to: '',
+          value: '0x1333333337',
+          data: '',
+          nonce: nonce.toString()
+        }
+        
+        console.log(JSON.stringify(txn))
+        debugger
 
-    web3.eth.sendRawTransaction(txn, function(err, hash) {
-      if (err) throw(err)
-      let startBlockNumber = web3.eth.BlockNumber()
+        txn = new Tx(txn)
+        txn.sign(faucetPk)
 
-      SetInterval( function() {
-        web3.eth.getBlock("latest", (e, block) {
-          if (e) throw(e)
-          if (block.transactions.indexOf(hash) != -1) {
-            console.log(hash, " was included!");
-          }
+        web3.eth.sendSignedTransaction('0x'+txn.serialize().toString('hex'), function(err, hash) {
+          if (err) throw(err)
+          debugger
+          let startBlockNumber = web3.eth.BlockNumber()
+
+          SetInterval( function() {
+            web3.eth.getBlock("latest", (e, block) => {
+              if (e) throw(e)
+
+              if (block.transactions.indexOf(hash) != -1) {
+                console.log(hash, " was included!");
+                callback(null, hash)
+              }
+            })
+          }, 100)
         })
-      }, 100)
+      }).catch((error) => {
+        callback(error, null)
+      })
+    }, (err, results) => {
+      resolve(null)
+      debugger
     })
+  })
 
-
-  }
+  return promise
 }
 
 let doTxn = (task, callback) => {
@@ -60,11 +86,14 @@ let doTxn = (task, callback) => {
 let web3 = new Web3(new Web3.providers.HttpProvider(endpoint))
 let queue = Async.queue(doTxn, 2)
 
-setInterval(() => {
-  let wast = GenerateTest()
+createAccounts(2)
+  .then((results) => {
+    setInterval(() => {
+      let wast = GenerateTest()
 
-  queue.push(wast, (err) => {
-    if (err) console.log(err)
-    //TODO gather results
+      queue.push(wast, (err) => {
+        if (err) console.log(err)
+        //TODO gather results
+      })
+    }, 1000/7)
   })
-}, 1000/7)
